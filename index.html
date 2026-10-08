@@ -74,7 +74,8 @@ button:disabled{opacity:.5;cursor:default}
 .prog{height:6px;background:var(--line);border-radius:3px;overflow:hidden}
 .prog i{display:block;height:100%;width:0;background:var(--accent);transition:width .1s}
 #gifOut{display:grid;gap:10px}
-#gifOut img{width:100%;border-radius:6px;border:1px solid var(--line);background:#fff}
+#gifOut img{width:100%;border-radius:6px;border:1px solid var(--line);background:#fff;-webkit-touch-callout:default;-webkit-user-select:auto;user-select:auto}
+.tip{display:grid;gap:4px;font-size:13px;line-height:1.5;padding:10px 12px;border-radius:8px;background:var(--field);border:1px solid var(--line)}
 .meta{font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums}
 input[type=color]{width:42px;height:34px;border:1px solid var(--line);border-radius:8px;background:var(--field);padding:2px}
 @media (prefers-reduced-motion: reduce){.prog i,.chev{transition:none}}
@@ -109,7 +110,7 @@ input[type=color]{width:42px;height:34px;border:1px solid var(--line);border-rad
           <select id="gifW"><option value="600">600px (가벼움)</option><option value="900" selected>900px</option><option value="1200">1200px (원본)</option></select>
         </label>
         <label class="f">초당 프레임
-          <select id="gifFps"><option value="10">10fps</option><option value="15" selected>15fps</option><option value="20">20fps</option></select>
+          <select id="gifFps"><option value="10">10fps</option><option value="12">12fps</option><option value="15" selected>15fps</option><option value="20">20fps</option></select>
         </label>
       </div>
       <button type="button" class="primary" id="makeGif">GIF 만들기</button>
@@ -840,6 +841,8 @@ renderSlides();renderMsgs();
 
 /* ---------- GIF export ---------- */
 let gifBlob=null, gifUrl=null, downloads=null;
+const IOS=/iPhone|iPad|iPod/.test(navigator.userAgent)||(navigator.platform==="MacIntel"&&navigator.maxTouchPoints>1);
+if(IOS){$("gifW").value="600";$("gifFps").value="12";}
 (async()=>{try{downloads=await window.claude?.use?.("downloads");}catch(e){downloads=null;}})();
 const tick=()=>new Promise(r=>setTimeout(r,0));
 $("makeGif").onclick=async()=>{
@@ -847,6 +850,7 @@ $("makeGif").onclick=async()=>{
   const gw=+$("gifW").value, fps=+$("gifFps").value, gh=Math.round(gw*H/W), sc=gw/W;
   const T=total(), frames=Math.round(T*fps), delay=Math.round(1000/fps);
   btn.disabled=true;btn.textContent="만드는 중…";prog.hidden=false;bar.style.width="0%";out.innerHTML="";
+  try{
   const cv=document.createElement("canvas");cv.width=gw;cv.height=gh;const c=cv.getContext("2d",{willReadFrequently:true});
   const {GIFEncoder,quantize,applyPalette}=window.gifenc;
   const enc=GIFEncoder();
@@ -858,21 +862,35 @@ $("makeGif").onclick=async()=>{
     if(f%2===0){bar.style.width=`${(f+1)/frames*100}%`;await tick();}
   }
   enc.finish();
-  gifBlob=new Blob([enc.bytes()],{type:"image/gif"});
-  if(gifUrl)URL.revokeObjectURL(gifUrl);gifUrl=URL.createObjectURL(gifBlob);
+  const bytes=enc.bytes();
+  gifBlob=new Blob([bytes],{type:"image/gif"});
   bar.style.width="100%";
   const kb=gifBlob.size/1024, size=kb>1024?`${(kb/1024).toFixed(1)}MB`:`${Math.round(kb)}KB`;
-  out.innerHTML=`<img alt="만들어진 GIF" src="${gifUrl}"><div class="meta">${gw}×${gh} · ${frames}프레임 · ${T}초 반복 · ${size}</div>`;
+  // a data: URL (not blob:) so iPhone's long-press menu offers "사진 앱에 저장"
+  const dataUrl=await new Promise(r=>{const fr=new FileReader();fr.onload=()=>r(fr.result);fr.onerror=()=>r(null);fr.readAsDataURL(gifBlob);});
+  if(gifUrl)URL.revokeObjectURL(gifUrl);gifUrl=dataUrl||URL.createObjectURL(gifBlob);
+  out.innerHTML=`<img alt="만들어진 GIF" class="gifimg" src="${gifUrl}"><div class="meta">${gw}×${gh} · ${frames}프레임 · ${T}초 반복 · ${size}</div>`;
+  const tip=document.createElement("div");tip.className="tip";
+  tip.innerHTML=IOS
+    ? `<b>아이폰·아이패드</b><span>위 GIF를 <b>길게 누른 뒤 ‘사진 앱에 저장’</b>을 누르면 사진첩에 움직이는 GIF로 저장돼요.</span><span>아래 ‘파일로 저장’ 버튼으로 받은 GIF는 사진첩이 아니라 <b>‘파일’ 앱 › 다운로드</b> 폴더에 들어가요.</span>`
+    : `<span>안 되면 위 GIF를 우클릭(휴대폰은 길게 누르기)해서 ‘이미지 저장’을 누르세요.</span>`;
+  const msg=document.createElement("p");msg.className="hint";msg.setAttribute("role","status");
   if(downloads){
-    const sv=document.createElement("button");sv.type="button";sv.className="primary";sv.textContent="GIF 파일 저장";
-    const msg=document.createElement("p");msg.className="hint";
-    sv.onclick=async()=>{try{await downloads.save({filename:"benefit-banner.gif",data:gifBlob});msg.textContent="저장했어요.";}
-      catch(e){msg.textContent=e?.code==="declined"?"저장을 취소했어요.":"이 화면에서는 저장할 수 없어요. 위 이미지를 길게 누르거나 우클릭해서 저장하세요.";}};
-    out.append(sv,msg);
-  }else{
-    const p=document.createElement("p");p.className="hint";p.textContent="위 GIF를 우클릭(휴대폰은 길게 누르기)해서 ‘이미지 저장’을 누르세요.";out.append(p);
-  }
-  btn.disabled=false;btn.textContent="GIF 다시 만들기";prog.hidden=true;
+    const sv=document.createElement("button");sv.type="button";sv.className=IOS?"":"primary";sv.textContent=IOS?"파일로 저장 (파일 앱)":"GIF 파일 저장";
+    sv.onclick=async()=>{
+      try{
+        const r=await downloads.save({filename:"megabox-banner.gif",data:bytes.slice(0)});
+        msg.textContent=r?.status==="delivered"?"보냈어요.":IOS?"저장했어요. ‘파일’ 앱 › 다운로드에서 찾을 수 있어요.":"저장했어요.";
+      }catch(e){
+        const c=e?.code;
+        msg.textContent=c==="declined"?"저장을 취소했어요.":c==="rate_limited"?"이미 저장 창이 열려 있어요. 잠시 뒤 다시 눌러 주세요.":`이 화면에서는 파일 저장이 막혀 있어요${c?` (${c})`:""}. 위 GIF를 길게 눌러 저장해 주세요.`;
+      }
+    };
+    out.append(tip,sv,msg);
+  }else out.append(tip);
+  }catch(err){
+    out.innerHTML=`<p class="hint">GIF를 만들지 못했어요${IOS?". 아이폰은 메모리가 작아서 큰 GIF가 실패할 수 있어요. 가로 크기를 600px로, 초당 프레임을 10fps로 낮춰 다시 해 보세요":""}. (${err&&err.message||err})</p>`;
+  }finally{btn.disabled=false;btn.textContent="GIF 다시 만들기";prog.hidden=true;}
 };
 
 /* ---------- folding panels ---------- */
